@@ -41,6 +41,15 @@ jobs:
         run: |
           set -euo pipefail
           destination="ftp://cp17.nordicway.dk//public_html/Projects/HarbuScanner"
+          # Some shared hosts reject implicit MKD/CWD during file upload.
+          # Create nested directories explicitly from the existing project root.
+          for dir in css js assets; do
+            echo "Ensuring remote directory: $dir"
+            curl --fail --show-error --silent --ssl-reqd --ftp-pasv \
+              --user "$FTP_USER:$FTP_PASSWORD" \
+              --quote "-MKD $dir" \
+              --list-only "$destination/" >/dev/null
+          done
           files=(index.html manifest.webmanifest service-worker.js)
           while IFS= read -r -d '' file; do files+=("$file"); done < <(find css js assets -type f -print0)
           for file in "${files[@]}"; do
