@@ -1,0 +1,54 @@
+name: Deploy HarbuScanner to Nordicway
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harbuscanner-nordicway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Upload HarbuScanner via FTPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Verify credentials
+        env:
+          FTP_USER: ${{ secrets.NORDICWAY_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.NORDICWAY_FTP_PASSWORD }}
+        run: |
+          test -n "$FTP_USER" || { echo "::error::Missing NORDICWAY_FTP_USER"; exit 1; }
+          test -n "$FTP_PASSWORD" || { echo "::error::Missing NORDICWAY_FTP_PASSWORD"; exit 1; }
+
+      - name: Upload website files over explicit FTPS
+        env:
+          FTP_USER: ${{ secrets.NORDICWAY_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.NORDICWAY_FTP_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination="ftp://cp17.nordicway.dk//public_html/Projects/HarbuScanner"
+          files=(index.html manifest.webmanifest service-worker.js)
+          while IFS= read -r -d '' file; do files+=("$file"); done < <(find css js assets -type f -print0)
+          for file in "${files[@]}"; do
+            echo "Uploading $file"
+            curl --fail --show-error --silent --retry 2 \
+              --ssl-reqd --ftp-pasv --ftp-create-dirs \
+              --user "$FTP_USER:$FTP_PASSWORD" \
+              --upload-file "$file" \
+              "$destination/$file"
+          done
+          echo "HarbuScanner files uploaded successfully."
