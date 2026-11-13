@@ -41,23 +41,26 @@ jobs:
         run: |
           set -euo pipefail
           destination="ftp://cp17.nordicway.dk//public_html/Projects/HarbuScanner"
-          # Some shared hosts reject implicit MKD/CWD during file upload.
-          # Create nested directories explicitly from the existing project root.
-          for dir in css js assets; do
-            echo "Ensuring remote directory: $dir"
-            curl --fail --show-error --silent --ssl-reqd --ftp-pasv \
-              --user "$FTP_USER:$FTP_PASSWORD" \
-              --quote "-MKD $dir" \
-              --list-only "$destination/" >/dev/null
-          done
-          files=(index.html manifest.webmanifest service-worker.js)
-          while IFS= read -r -d '' file; do files+=("$file"); done < <(find css js assets -type f -print0)
-          for file in "${files[@]}"; do
+          # Flatten only the public site into a temporary upload directory.
+          # NordicWay allows uploads to the project root but rejects MKD for subdirectories.
+          staging="$(mktemp -d)"
+          trap 'rm -rf "$staging"' EXIT
+          cp index.html manifest.webmanifest service-worker.js "$staging/"
+          cp css/scanner.css "$staging/scanner.css"
+          cp js/app.js js/tracking.js js/profiles.js "$staging/"
+          cp assets/icon.svg "$staging/icon.svg"
+
+          # Rewrite public paths for the flattened deployment layout.
+          sed -i 's|./css/scanner.css|./scanner.css|g; s|./js/app.js|./app.js|g; s|./assets/icon.svg|./icon.svg|g' "$staging/index.html"
+          sed -i 's|./assets/icon.svg|./icon.svg|g' "$staging/manifest.webmanifest"
+          sed -i 's|./css/scanner.css|./scanner.css|g; s|./js/app.js|./app.js|g; s|./js/tracking.js|./tracking.js|g; s|./js/profiles.js|./profiles.js|g; s|./assets/icon.svg|./icon.svg|g' "$staging/service-worker.js"
+
+          for file in index.html manifest.webmanifest service-worker.js scanner.css app.js tracking.js profiles.js icon.svg; do
             echo "Uploading $file"
             curl --fail --show-error --silent --retry 2 \
-              --ssl-reqd --ftp-pasv --ftp-create-dirs \
+              --ssl-reqd --ftp-pasv \
               --user "$FTP_USER:$FTP_PASSWORD" \
-              --upload-file "$file" \
+              --upload-file "$staging/$file" \
               "$destination/$file"
           done
           echo "HarbuScanner files uploaded successfully."
