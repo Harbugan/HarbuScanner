@@ -1,0 +1,58 @@
+name: Deploy HarbuScanner to lilleoere.eu
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harbuscanner-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SFTP_HOST: ${{ secrets.SFTP_HOST }}
+      SFTP_USER: ${{ secrets.SFTP_USER }}
+      SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+      SFTP_PORT: ${{ vars.SFTP_PORT || '22' }}
+      SFTP_REMOTE_DIR: ${{ vars.SFTP_REMOTE_DIR }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          test -n "$SFTP_HOST" && test -n "$SFTP_USER" && test -n "$SFTP_PASSWORD" && test -n "$SFTP_REMOTE_DIR" || {
+            echo "::error::Configure SFTP_HOST, SFTP_USER, SFTP_PASSWORD secrets and SFTP_REMOTE_DIR variable."
+            exit 1
+          }
+          [[ "$SFTP_REMOTE_DIR" == /* && "$SFTP_REMOTE_DIR" != "/" && "$SFTP_REMOTE_DIR" != *".."* ]] || {
+            echo "::error::SFTP_REMOTE_DIR must be an absolute, dedicated subdirectory without '..'."
+            exit 1
+          }
+
+      - name: Install SFTP client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
+      - name: Upload website via SFTP
+        shell: bash
+        run: |
+          mkdir -p /tmp/harbuscanner-upload
+          cp index.html manifest.webmanifest service-worker.js /tmp/harbuscanner-upload/
+          cp -R css js assets /tmp/harbuscanner-upload/
+          # lftp reads the password from the environment; do not print credentials.
+          export LFTP_PASSWORD="$SFTP_PASSWORD"
+          lftp -u "$SFTP_USER","$LFTP_PASSWORD" -p "$SFTP_PORT" "sftp://$SFTP_HOST" <<EOF
+          set cmd:fail-exit yes
+          set sftp:auto-confirm no
+          mkdir -p "$SFTP_REMOTE_DIR"
+          mirror --reverse --delete --verbose /tmp/harbuscanner-upload "$SFTP_REMOTE_DIR"
+          bye
+          EOF
